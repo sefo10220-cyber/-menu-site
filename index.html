@@ -411,9 +411,51 @@
       .item-img { width: 62px; height: 62px; }
       .item-price { font-size: 14px; }
     }
+
+    /* ===== LOADING ===== */
+    #app-loading {
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      z-index: 2000;
+      transition: opacity 0.3s;
+    }
+    #app-loading.hidden { opacity: 0; pointer-events: none; }
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #app-loading p { color: var(--text-muted); font-size: 14px; }
+
+    .sync-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      padding: 6px 12px;
+      border-radius: 100px;
+      margin-bottom: 16px;
+    }
+    .sync-badge.cloud { background: #27ae6020; color: var(--success); border: 1px solid var(--success); }
+    .sync-badge.local { background: #c8952a20; color: var(--accent); border: 1px solid var(--accent); }
   </style>
 </head>
 <body>
+
+<div id="app-loading">
+  <div class="spinner"></div>
+  <p>جاري تحميل المنيو...</p>
+</div>
 
 <!-- ========== CUSTOMER VIEW ========== -->
 <div id="customer-view">
@@ -452,6 +494,27 @@
     <button class="btn btn-ghost" onclick="closeAdmin()">← رجوع للمنيو</button>
   </div>
   <div id="admin-body">
+
+    <div id="sync-status"></div>
+
+    <!-- Publish to GitHub -->
+    <div class="admin-section">
+      <div class="admin-section-title">📤 نشر التعديلات للجميع (مجاني 100%)</div>
+      <p style="font-size:12px;color:var(--text-muted);margin-bottom:14px;line-height:1.8;">
+        بيانات المنيو مدمجة داخل <strong>index.html</strong> — بعد التعديل حمّل الملف وارفعه على GitHub
+      </p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+        <button class="btn btn-primary" onclick="publishMenu()">⬇️ تحميل index.html محدّث</button>
+        <button class="btn btn-ghost" onclick="copyMenuDataCode()">📋 نسخ كود البيانات</button>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px;line-height:1.9;">
+        <strong>خطوات الرفع على GitHub:</strong><br>
+        1. اضغط <strong>تحميل index.html محدّث</strong><br>
+        2. ادخل مستودعك على github.com ← ملف <strong>index.html</strong> ← ✏️ Edit<br>
+        3. احذف المحتوى القديم وارفع الملف الجديد (أو الصق كود البيانات فقط)<br>
+        4. اضغط <strong>Commit changes</strong> ← الكل بيشوف التعديل!
+      </div>
+    </div>
 
     <!-- Settings -->
     <div class="admin-section">
@@ -623,49 +686,104 @@
 
 <script>
 // ==============================
+//  بيانات المنيو — مدمجة بالكود (عدّل هون أو من لوحة الإدارة)
+// ==============================
+// @MENU_DATA_BEGIN
+const MENU_DATA = {
+  settings: {
+    name: 'مطعمي',
+    subtitle: 'أهلاً وسهلاً بكم',
+    currency: '₪',
+    password: '1234'
+  },
+  categories: [
+    { id: 'cat_1', name: 'وجبات رئيسية', icon: '🍽️' },
+    { id: 'cat_2', name: 'مشروبات', icon: '🥤' },
+    { id: 'cat_3', name: 'حلويات', icon: '🍰' }
+  ],
+  items: [
+    { id: 'item_1', catId: 'cat_1', name: 'شاورما دجاج', desc: 'شاورما دجاج مع صوص الثوم والخضار الطازجة', price: 35, img: '' },
+    { id: 'item_2', catId: 'cat_1', name: 'برغر لحم', desc: 'برغر لحم مع جبنة وخس وطماطم', price: 45, img: '' },
+    { id: 'item_3', catId: 'cat_2', name: 'عصير برتقال طازج', desc: 'عصير برتقال طازج ١٠٠٪', price: 18, img: '' },
+    { id: 'item_4', catId: 'cat_2', name: 'قهوة عربية', desc: 'قهوة عربية أصيلة بالهيل', price: 12, img: '' },
+    { id: 'item_5', catId: 'cat_3', name: 'كنافة', desc: 'كنافة نابلسية بالجبن', price: 22, img: '' }
+  ]
+};
+// @MENU_DATA_END
+
+// ==============================
 //  DATA LAYER
 // ==============================
-const DB_KEY = 'restaurant_menu_v1';
-
-function loadData() {
-  try {
-    return JSON.parse(localStorage.getItem(DB_KEY)) || getDefaultData();
-  } catch { return getDefaultData(); }
-}
+let db = JSON.parse(JSON.stringify(MENU_DATA));
+let currentFilterCatId = null;
 
 function saveData(data) {
-  localStorage.setItem(DB_KEY, JSON.stringify(data));
+  db = data;
 }
 
-function getDefaultData() {
-  return {
-    settings: {
-      name: 'مطعمي',
-      subtitle: 'أهلاً وسهلاً بكم',
-      currency: '₪',
-      password: '1234'
-    },
-    categories: [
-      { id: 'cat_1', name: 'وجبات رئيسية', icon: '🍽️' },
-      { id: 'cat_2', name: 'مشروبات', icon: '🥤' },
-      { id: 'cat_3', name: 'حلويات', icon: '🍰' }
-    ],
-    items: [
-      { id: 'item_1', catId: 'cat_1', name: 'شاورما دجاج', desc: 'شاورما دجاج مع صوص الثوم والخضار الطازجة', price: 35, img: '' },
-      { id: 'item_2', catId: 'cat_1', name: 'برغر لحم', desc: 'برغر لحم مع جبنة وخس وطماطم', price: 45, img: '' },
-      { id: 'item_3', catId: 'cat_2', name: 'عصير برتقال طازج', desc: 'عصير برتقال طازج ١٠٠٪', price: 18, img: '' },
-      { id: 'item_4', catId: 'cat_2', name: 'قهوة عربية', desc: 'قهوة عربية أصيلة بالهيل', price: 12, img: '' },
-      { id: 'item_5', catId: 'cat_3', name: 'كنافة', desc: 'كنافة نابلسية بالجبن', price: 22, img: '' }
-    ]
-  };
+function hideLoading() {
+  var el = document.getElementById('app-loading');
+  if (el) {
+    el.classList.add('hidden');
+    setTimeout(function() { el.style.display = 'none'; }, 300);
+  }
 }
 
-let db = loadData();
+function renderSyncStatus() {
+  var el = document.getElementById('sync-status');
+  if (!el) return;
+  el.innerHTML = '<div class="sync-badge cloud">📄 ملف واحد index.html — ارفعه على GitHub ليظهر التعديل عند الجميع</div>';
+}
+
+function buildMenuDataBlock() {
+  return '// @MENU_DATA_BEGIN\nconst MENU_DATA = ' + JSON.stringify(db, null, 2) + ';\n// @MENU_DATA_END';
+}
+
+function initData() {
+  db = JSON.parse(JSON.stringify(MENU_DATA));
+  hideLoading();
+  renderMenu();
+}
+
+function publishMenu() {
+  var newBlock = buildMenuDataBlock();
+  if (location.protocol === 'http:' || location.protocol === 'https:') {
+    fetch(location.href.split('?')[0] + '?v=' + Date.now())
+      .then(function(r) { return r.text(); })
+      .then(function(html) {
+        var updated = html.replace(
+          /\/\/ @MENU_DATA_BEGIN[\s\S]*?\/\/ @MENU_DATA_END/,
+          newBlock
+        );
+        var blob = new Blob([updated], { type: 'text/html;charset=utf-8' });
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'index.html';
+        a.click();
+        URL.revokeObjectURL(a.href);
+        toast('تم تحميل index.html — ارفعه على GitHub ✓');
+      })
+      .catch(function() { copyMenuDataCode(); });
+  } else {
+    copyMenuDataCode();
+    toast('انسخ الكود والصقه في index.html على GitHub');
+  }
+}
+
+function copyMenuDataCode() {
+  var code = buildMenuDataBlock();
+  navigator.clipboard.writeText(code).then(function() {
+    toast('تم نسخ كود البيانات — الصقه في index.html ✓');
+  }).catch(function() {
+    prompt('انسخ هذا الكود والصقه مكان // @MENU_DATA_BEGIN ... // @MENU_DATA_END:', code);
+  });
+}
 
 // ==============================
 //  CUSTOMER VIEW RENDER
 // ==============================
 function renderMenu(filterCatId = null) {
+  currentFilterCatId = filterCatId;
   const { settings, categories, items } = db;
 
   document.getElementById('restaurant-name').textContent = settings.name;
@@ -762,6 +880,7 @@ function buildItemCard(item, currency) {
 // ==============================
 function openAdmin() {
   document.getElementById('admin-panel').classList.add('open');
+  renderSyncStatus();
   renderAdminCats();
   renderAdminItems();
   // Fill settings
@@ -1144,7 +1263,7 @@ function toast(msg) {
 // ==============================
 //  INIT
 // ==============================
-renderMenu();
+initData();
 </script>
 </body>
 </html>
