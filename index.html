@@ -498,22 +498,19 @@
 
     <div id="sync-status"></div>
 
-    <!-- Publish to GitHub -->
-    <div class="admin-section">
-      <div class="admin-section-title">📤 نشر التعديلات للجميع (مجاني 100%)</div>
-      <p style="font-size:12px;color:var(--text-muted);margin-bottom:14px;line-height:1.8;">
-        بيانات المنيو مدمجة داخل <strong>index.html</strong> — بعد التعديل حمّل الملف وارفعه على GitHub
+    <!-- Cloud Sync Setup -->
+    <div class="admin-section" id="firebase-setup-section">
+      <div class="admin-section-title">☁️ مزامنة اللابتوب والتلفون (مجاني)</div>
+      <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px;line-height:1.8;">
+        بدون هالخطوة، التعديل بيظهر بس على الجهاز يلي عدّلت منه.<br>
+        فعّل Firebase مرة وحدة ← أي تعديل من لوحة الإدارة بيظهر عند <strong>الكل</strong> فوراً.
       </p>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
-        <button class="btn btn-primary" onclick="publishMenu()">⬇️ تحميل index.html محدّث</button>
-        <button class="btn btn-ghost" onclick="copyMenuDataCode()">📋 نسخ كود البيانات</button>
-      </div>
-      <div style="font-size:12px;color:var(--text-muted);background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px;line-height:1.9;">
-        <strong>خطوات الرفع على GitHub:</strong><br>
-        1. اضغط <strong>تحميل index.html محدّث</strong><br>
-        2. ادخل مستودعك على github.com ← ملف <strong>index.html</strong> ← ✏️ Edit<br>
-        3. احذف المحتوى القديم وارفع الملف الجديد (أو الصق كود البيانات فقط)<br>
-        4. اضغط <strong>Commit changes</strong> ← الكل بيشوف التعديل!
+      <div id="firebase-setup-steps" style="font-size:12px;color:var(--text-muted);background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px;line-height:2;">
+        <strong>إعداد سريع (5 دقائق، مجاني 100%):</strong><br>
+        1. ادخل <a href="https://console.firebase.google.com" target="_blank" style="color:var(--accent);">console.firebase.google.com</a><br>
+        2. أنشئ مشروع → Firestore Database → Start in <strong>test mode</strong><br>
+        3. Project Settings → Web app → انسخ firebaseConfig<br>
+        4. الصق القيم في <strong>FIREBASE_CONFIG</strong> داخل index.html وارفع الملف على GitHub
       </div>
     </div>
 
@@ -685,6 +682,8 @@
 <!-- ========== TOAST ========== -->
 <div id="toast">تم الحفظ ✓</div>
 
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script>
 // ==============================
 //  بيانات المنيو — مدمجة بالكود (عدّل هون أو من لوحة الإدارة)
@@ -714,11 +713,27 @@ const MENU_DATA = {
 // @MENU_DATA_END
 
 // ==============================
+//  FIREBASE — عبّي هالقيم من console.firebase.google.com
+// ==============================
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyAxNyQswcQw6GIgYdVRnM8V_RVK_V8jks4",
+  authDomain: "menu-b148d.firebaseapp.com",
+  projectId: "menu-b148d",
+  storageBucket: "menu-b148d.firebasestorage.app",
+  messagingSenderId: "703911122266",
+  appId: "1:703911122266:web:3ef19c0d581029b1b70f63"
+};
+const MENU_DOC_ID = 'main';
+const USE_FIREBASE = FIREBASE_CONFIG.apiKey && !FIREBASE_CONFIG.apiKey.includes('YOUR_');
+
+// ==============================
 //  DATA LAYER
 // ==============================
 const STORAGE_KEY = 'restaurant_menu_v1';
 let db = cloneMenu(MENU_DATA);
 let currentFilterCatId = null;
+let menuDocRef = null;
+let firebaseReady = false;
 
 function cloneMenu(data) {
   return JSON.parse(JSON.stringify(data));
@@ -733,12 +748,24 @@ function loadFromStorage() {
 
 function saveData(data) {
   db = data;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
-  } catch (e) {
-    console.warn('localStorage failed', e);
-  }
   renderMenu(currentFilterCatId);
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); } catch (e) {}
+
+  if (USE_FIREBASE && firebaseReady && menuDocRef) {
+    menuDocRef.set(data).catch(function() {
+      toast('فشل الحفظ على السحابة — تحقق من الإنترنت');
+    });
+  }
+}
+
+function refreshAdminIfOpen() {
+  if (!document.getElementById('admin-panel').classList.contains('open')) return;
+  renderAdminCats();
+  renderAdminItems();
+  var s = db.settings;
+  document.getElementById('s-name').value = s.name;
+  document.getElementById('s-subtitle').value = s.subtitle;
+  document.getElementById('s-currency').value = s.currency;
 }
 
 function hideLoading() {
@@ -751,75 +778,68 @@ function hideLoading() {
 
 function renderSyncStatus() {
   var el = document.getElementById('sync-status');
+  var setupEl = document.getElementById('firebase-setup-section');
   if (!el) return;
-  el.innerHTML = '<div class="sync-badge cloud">✓ التعديلات تنحفظ بمتصفحك — ليظهر عند الجميع: حمّل index.html وارفعه على GitHub</div>';
-}
 
-function buildMenuDataBlock() {
-  var exportDb = cloneMenu(db);
-  exportDb._rev = (MENU_DATA._rev || 1) + 1;
-  return '// @MENU_DATA_BEGIN\nconst MENU_DATA = ' + JSON.stringify(exportDb, null, 2) + ';\n// @MENU_DATA_END';
-}
-
-function initData() {
-  var embedded = cloneMenu(MENU_DATA);
-  var stored = loadFromStorage();
-  var embeddedRev = embedded._rev || 1;
-
-  if (stored && (stored._rev || 0) === embeddedRev) {
-    db = stored;
+  if (USE_FIREBASE && firebaseReady) {
+    el.innerHTML = '<div class="sync-badge cloud">☁️ متصل — التعديلات تظهر على اللابتوب والتلفون والكل</div>';
+    if (setupEl) setupEl.style.display = 'none';
+  } else if (USE_FIREBASE) {
+    el.innerHTML = '<div class="sync-badge local">⏳ جاري الاتصال بالسحابة...</div>';
   } else {
-    db = embedded;
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); } catch (e) {}
+    el.innerHTML = '<div class="sync-badge local">⚠️ غير متصل — التعديل بيظهر بس على هالجهاز! فعّل Firebase تحت</div>';
+    if (setupEl) setupEl.style.display = 'block';
+  }
+}
+
+async function initData() {
+  db = cloneMenu(MENU_DATA);
+  renderMenu();
+
+  if (!USE_FIREBASE) {
+    var stored = loadFromStorage();
+    if (stored) db = stored;
+    renderSyncStatus();
+    hideLoading();
+    renderMenu();
+    return;
+  }
+
+  try {
+    firebase.initializeApp(FIREBASE_CONFIG);
+    menuDocRef = firebase.firestore().collection('menus').doc(MENU_DOC_ID);
+
+    menuDocRef.onSnapshot(function(snap) {
+      if (snap.exists) {
+        db = snap.data();
+        renderMenu(currentFilterCatId);
+        refreshAdminIfOpen();
+      }
+      if (firebaseReady) renderSyncStatus();
+    }, function() {
+      toast('خطأ في الاتصال بالسحابة');
+    });
+
+    var snap = await menuDocRef.get();
+    if (snap.exists) {
+      db = snap.data();
+    } else {
+      var seed = cloneMenu(MENU_DATA);
+      await menuDocRef.set(seed);
+      db = seed;
+    }
+    firebaseReady = true;
+    renderSyncStatus();
+  } catch (err) {
+    console.error(err);
+    var stored = loadFromStorage();
+    if (stored) db = stored;
+    toast('فشل الاتصال — يعمل بوضع محلي');
+    renderSyncStatus();
   }
 
   hideLoading();
   renderMenu();
-}
-
-function publishMenu() {
-  var newBlock = buildMenuDataBlock();
-  var newRev = (MENU_DATA._rev || 1) + 1;
-
-  function downloadHtml(html) {
-    var updated = html.replace(
-      /\/\/ @MENU_DATA_BEGIN[\s\S]*?\/\/ @MENU_DATA_END/,
-      newBlock
-    );
-    if (updated === html) {
-      toast('خطأ: ما لقينا بيانات المنيو بالملف');
-      return;
-    }
-    var blob = new Blob([updated], { type: 'text/html;charset=utf-8' });
-    var a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'index.html';
-    a.click();
-    URL.revokeObjectURL(a.href);
-    db._rev = newRev;
-    MENU_DATA._rev = newRev;
-    saveData(db);
-    toast('تم تحميل index.html — ارفعه على GitHub ✓');
-  }
-
-  if (location.protocol === 'http:' || location.protocol === 'https:') {
-    fetch(location.href.split('?')[0] + '?v=' + Date.now(), { cache: 'no-store' })
-      .then(function(r) { return r.text(); })
-      .then(downloadHtml)
-      .catch(function() { copyMenuDataCode(); toast('انسخ الكود والصقه في index.html'); });
-  } else {
-    copyMenuDataCode();
-    toast('انسخ الكود والصقه في index.html على GitHub');
-  }
-}
-
-function copyMenuDataCode() {
-  var code = buildMenuDataBlock();
-  navigator.clipboard.writeText(code).then(function() {
-    toast('تم نسخ كود البيانات — الصقه في index.html ✓');
-  }).catch(function() {
-    prompt('انسخ هذا الكود والصقه مكان // @MENU_DATA_BEGIN ... // @MENU_DATA_END:', code);
-  });
 }
 
 // ==============================
