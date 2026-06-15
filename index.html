@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <title>منيو المطعم</title>
   <style>
     :root {
@@ -690,6 +691,7 @@
 // ==============================
 // @MENU_DATA_BEGIN
 const MENU_DATA = {
+  _rev: 1,
   settings: {
     name: 'مطعمي',
     subtitle: 'أهلاً وسهلاً بكم',
@@ -714,11 +716,29 @@ const MENU_DATA = {
 // ==============================
 //  DATA LAYER
 // ==============================
-let db = JSON.parse(JSON.stringify(MENU_DATA));
+const STORAGE_KEY = 'restaurant_menu_v1';
+let db = cloneMenu(MENU_DATA);
 let currentFilterCatId = null;
+
+function cloneMenu(data) {
+  return JSON.parse(JSON.stringify(data));
+}
+
+function loadFromStorage() {
+  try {
+    var raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
 
 function saveData(data) {
   db = data;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+  } catch (e) {
+    console.warn('localStorage failed', e);
+  }
+  renderMenu(currentFilterCatId);
 }
 
 function hideLoading() {
@@ -732,38 +752,61 @@ function hideLoading() {
 function renderSyncStatus() {
   var el = document.getElementById('sync-status');
   if (!el) return;
-  el.innerHTML = '<div class="sync-badge cloud">📄 ملف واحد index.html — ارفعه على GitHub ليظهر التعديل عند الجميع</div>';
+  el.innerHTML = '<div class="sync-badge cloud">✓ التعديلات تنحفظ بمتصفحك — ليظهر عند الجميع: حمّل index.html وارفعه على GitHub</div>';
 }
 
 function buildMenuDataBlock() {
-  return '// @MENU_DATA_BEGIN\nconst MENU_DATA = ' + JSON.stringify(db, null, 2) + ';\n// @MENU_DATA_END';
+  var exportDb = cloneMenu(db);
+  exportDb._rev = (MENU_DATA._rev || 1) + 1;
+  return '// @MENU_DATA_BEGIN\nconst MENU_DATA = ' + JSON.stringify(exportDb, null, 2) + ';\n// @MENU_DATA_END';
 }
 
 function initData() {
-  db = JSON.parse(JSON.stringify(MENU_DATA));
+  var embedded = cloneMenu(MENU_DATA);
+  var stored = loadFromStorage();
+  var embeddedRev = embedded._rev || 1;
+
+  if (stored && (stored._rev || 0) === embeddedRev) {
+    db = stored;
+  } else {
+    db = embedded;
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); } catch (e) {}
+  }
+
   hideLoading();
   renderMenu();
 }
 
 function publishMenu() {
   var newBlock = buildMenuDataBlock();
+  var newRev = (MENU_DATA._rev || 1) + 1;
+
+  function downloadHtml(html) {
+    var updated = html.replace(
+      /\/\/ @MENU_DATA_BEGIN[\s\S]*?\/\/ @MENU_DATA_END/,
+      newBlock
+    );
+    if (updated === html) {
+      toast('خطأ: ما لقينا بيانات المنيو بالملف');
+      return;
+    }
+    var blob = new Blob([updated], { type: 'text/html;charset=utf-8' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'index.html';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    db._rev = newRev;
+    MENU_DATA._rev = newRev;
+    saveData(db);
+    toast('تم تحميل index.html — ارفعه على GitHub ✓');
+  }
+
   if (location.protocol === 'http:' || location.protocol === 'https:') {
-    fetch(location.href.split('?')[0] + '?v=' + Date.now())
+    fetch(location.href.split('?')[0] + '?v=' + Date.now(), { cache: 'no-store' })
       .then(function(r) { return r.text(); })
-      .then(function(html) {
-        var updated = html.replace(
-          /\/\/ @MENU_DATA_BEGIN[\s\S]*?\/\/ @MENU_DATA_END/,
-          newBlock
-        );
-        var blob = new Blob([updated], { type: 'text/html;charset=utf-8' });
-        var a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'index.html';
-        a.click();
-        URL.revokeObjectURL(a.href);
-        toast('تم تحميل index.html — ارفعه على GitHub ✓');
-      })
-      .catch(function() { copyMenuDataCode(); });
+      .then(downloadHtml)
+      .catch(function() { copyMenuDataCode(); toast('انسخ الكود والصقه في index.html'); });
   } else {
     copyMenuDataCode();
     toast('انسخ الكود والصقه في index.html على GitHub');
@@ -1085,6 +1128,8 @@ function saveSettings() {
   if (newPw) db.settings.password = newPw;
   saveData(db);
   toast('تم حفظ الإعدادات ✓');
+  document.getElementById('restaurant-name').textContent = db.settings.name;
+  document.getElementById('restaurant-subtitle').textContent = db.settings.subtitle;
 }
 
 // ==============================
