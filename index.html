@@ -672,7 +672,7 @@
 <!-- ========== TOAST ========== -->
 <div id="toast">تم الحفظ ✓</div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.1/dist/umd/supabase.min.js"></script>
 <script>
 // ==============================
 //  بيانات المنيو — مدمجة بالكود (عدّل هون أو من لوحة الإدارة)
@@ -796,7 +796,8 @@ async function initData() {
   }
 
   try {
-    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    var createClient = window.supabase.createClient;
+    supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     supabase
       .channel('menus-realtime')
@@ -838,10 +839,11 @@ async function initData() {
     cloudReady = true;
     renderSyncStatus();
   } catch (err) {
-    console.error(err);
+    console.error('Supabase error:', err);
     var storedLocal = loadFromStorage();
     if (storedLocal) db = storedLocal;
-    toast('فشل الاتصال — يعمل بوضع محلي. شغّل create_menus_table.sql أولاً');
+    var msg = (err && (err.message || err.error_description || err.hint)) || 'فشل الاتصال';
+    toast('Supabase: ' + msg);
     renderSyncStatus();
   }
 
