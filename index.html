@@ -499,9 +499,9 @@
     <div id="sync-status"></div>
 
     <!-- Cloud Sync -->
-    <div class="admin-section" id="firebase-setup-section" style="display:none;">
+    <div class="admin-section" id="cloud-setup-section" style="display:none;">
       <div class="admin-section-title">☁️ مزامنة اللابتوب والتلفون</div>
-      <p style="font-size:12px;color:var(--text-muted);">Firebase مدمج بالملف ومفعّل.</p>
+      <p style="font-size:12px;color:var(--text-muted);">Supabase مدمج بالملف ومفعّل.</p>
     </div>
 
     <!-- Settings -->
@@ -672,8 +672,7 @@
 <!-- ========== TOAST ========== -->
 <div id="toast">تم الحفظ ✓</div>
 
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 // ==============================
 //  بيانات المنيو — مدمجة بالكود (عدّل هون أو من لوحة الإدارة)
@@ -703,18 +702,12 @@ const MENU_DATA = {
 // @MENU_DATA_END
 
 // ==============================
-//  FIREBASE — مدمج ومفعّل (menu-b148d)
+//  SUPABASE — menu-site
 // ==============================
-const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyAxNyQswcQw6GIgYdVRnM8V_RVK_V8jks4",
-  authDomain: "menu-b148d.firebaseapp.com",
-  projectId: "menu-b148d",
-  storageBucket: "menu-b148d.firebasestorage.app",
-  messagingSenderId: "703911122266",
-  appId: "1:703911122266:web:3ef19c0d581029b1b70f63"
-};
+const SUPABASE_URL = 'https://vgisrzfmesokisbsuhkg.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable__UzHylRDZNnJ82hsFL8vxQ_tE48i6c_';
 const MENU_DOC_ID = 'main';
-const USE_FIREBASE = true;
+const USE_SUPABASE = true;
 
 // ==============================
 //  DATA LAYER
@@ -722,8 +715,8 @@ const USE_FIREBASE = true;
 const STORAGE_KEY = 'restaurant_menu_v1';
 let db = cloneMenu(MENU_DATA);
 let currentFilterCatId = null;
-let menuDocRef = null;
-let firebaseReady = false;
+let supabase = null;
+let cloudReady = false;
 
 function cloneMenu(data) {
   return JSON.parse(JSON.stringify(data));
@@ -741,10 +734,17 @@ function saveData(data) {
   renderMenu(currentFilterCatId);
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); } catch (e) {}
 
-  if (USE_FIREBASE && firebaseReady && menuDocRef) {
-    menuDocRef.set(data).catch(function() {
-      toast('فشل الحفظ على السحابة — تحقق من الإنترنت');
-    });
+  if (USE_SUPABASE && cloudReady && supabase) {
+    supabase
+      .from('menus')
+      .upsert({
+        id: MENU_DOC_ID,
+        data: data,
+        updated_at: new Date().toISOString()
+      })
+      .then(function(res) {
+        if (res.error) toast('فشل الحفظ على السحابة — تحقق من الإنترنت');
+      });
   }
 }
 
@@ -768,16 +768,16 @@ function hideLoading() {
 
 function renderSyncStatus() {
   var el = document.getElementById('sync-status');
-  var setupEl = document.getElementById('firebase-setup-section');
+  var setupEl = document.getElementById('cloud-setup-section');
   if (!el) return;
 
-  if (USE_FIREBASE && firebaseReady) {
-    el.innerHTML = '<div class="sync-badge cloud">☁️ متصل — التعديلات تظهر على اللابتوب والتلفون والكل</div>';
+  if (USE_SUPABASE && cloudReady) {
+    el.innerHTML = '<div class="sync-badge cloud">☁️ متصل بـ Supabase — التعديلات تظهر على اللابتوب والتلفون والكل</div>';
     if (setupEl) setupEl.style.display = 'none';
-  } else if (USE_FIREBASE) {
-    el.innerHTML = '<div class="sync-badge local">⏳ جاري الاتصال بالسحابة...</div>';
+  } else if (USE_SUPABASE) {
+    el.innerHTML = '<div class="sync-badge local">⏳ جاري الاتصال بـ Supabase...</div>';
   } else {
-    el.innerHTML = '<div class="sync-badge local">⚠️ غير متصل — التعديل بيظهر بس على هالجهاز! فعّل Firebase تحت</div>';
+    el.innerHTML = '<div class="sync-badge local">⚠️ غير متصل — التعديل بيظهر بس على هالجهاز!</div>';
     if (setupEl) setupEl.style.display = 'block';
   }
 }
@@ -786,7 +786,7 @@ async function initData() {
   db = cloneMenu(MENU_DATA);
   renderMenu();
 
-  if (!USE_FIREBASE) {
+  if (!USE_SUPABASE) {
     var stored = loadFromStorage();
     if (stored) db = stored;
     renderSyncStatus();
@@ -796,35 +796,52 @@ async function initData() {
   }
 
   try {
-    firebase.initializeApp(FIREBASE_CONFIG);
-    menuDocRef = firebase.firestore().collection('menus').doc(MENU_DOC_ID);
+    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    menuDocRef.onSnapshot(function(snap) {
-      if (snap.exists) {
-        db = snap.data();
-        renderMenu(currentFilterCatId);
-        refreshAdminIfOpen();
-      }
-      if (firebaseReady) renderSyncStatus();
-    }, function() {
-      toast('خطأ في الاتصال بالسحابة');
-    });
+    supabase
+      .channel('menus-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'menus', filter: 'id=eq.' + MENU_DOC_ID },
+        function(payload) {
+          if (payload.new && payload.new.data) {
+            db = payload.new.data;
+            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); } catch (e) {}
+            renderMenu(currentFilterCatId);
+            refreshAdminIfOpen();
+          }
+        }
+      )
+      .subscribe();
 
-    var snap = await menuDocRef.get();
-    if (snap.exists) {
-      db = snap.data();
+    var res = await supabase
+      .from('menus')
+      .select('data')
+      .eq('id', MENU_DOC_ID)
+      .maybeSingle();
+
+    if (res.error) throw res.error;
+
+    if (res.data && res.data.data) {
+      db = res.data.data;
     } else {
       var seed = cloneMenu(MENU_DATA);
-      await menuDocRef.set(seed);
+      var ins = await supabase.from('menus').upsert({
+        id: MENU_DOC_ID,
+        data: seed,
+        updated_at: new Date().toISOString()
+      });
+      if (ins.error) throw ins.error;
       db = seed;
     }
-    firebaseReady = true;
+
+    cloudReady = true;
     renderSyncStatus();
   } catch (err) {
     console.error(err);
-    var stored = loadFromStorage();
-    if (stored) db = stored;
-    toast('فشل الاتصال — يعمل بوضع محلي');
+    var storedLocal = loadFromStorage();
+    if (storedLocal) db = storedLocal;
+    toast('فشل الاتصال — يعمل بوضع محلي. شغّل create_menus_table.sql أولاً');
     renderSyncStatus();
   }
 
