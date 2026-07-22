@@ -449,6 +449,61 @@
     }
     .sync-badge.cloud { background: #27ae6020; color: var(--success); border: 1px solid var(--success); }
     .sync-badge.local { background: #c8952a20; color: var(--accent); border: 1px solid var(--accent); }
+
+    /* ===== EXPORT ===== */
+    .export-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    @media (max-width: 480px) {
+      .export-grid { grid-template-columns: 1fr; }
+    }
+    .export-btn {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 4px;
+      padding: 14px 16px;
+      text-align: right;
+    }
+    .export-btn .export-title { font-size: 14px; font-weight: 700; }
+    .export-btn .export-desc { font-size: 11px; font-weight: 400; opacity: 0.85; }
+    #export-cat-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 14px;
+    }
+    .export-cat-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+    }
+    .export-cat-row span { font-size: 13px; color: var(--text); }
+    .export-cat-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .btn-sm { padding: 7px 12px; font-size: 12px; }
+    #export-busy {
+      display: none;
+      margin-top: 12px;
+      font-size: 13px;
+      color: var(--accent);
+      text-align: center;
+    }
+    #export-busy.show { display: block; }
+    #export-stage {
+      position: fixed;
+      left: -99999px;
+      top: 0;
+      pointer-events: none;
+      z-index: -1;
+    }
   </style>
 </head>
 <body>
@@ -526,6 +581,26 @@
       <div style="margin-top:12px;">
         <button class="btn btn-primary" onclick="saveSettings()">حفظ الإعدادات</button>
       </div>
+    </div>
+
+    <!-- Export PDF / Images -->
+    <div class="admin-section">
+      <div class="admin-section-title">تصدير للطباعة والمشاركة</div>
+      <p style="font-size:12px;color:var(--text-muted);margin-bottom:14px;line-height:1.7;">
+        حمّل المنيو PDF مرتب للطباعة، أو صورة لكل تصنيف لحفظها ومشاركتها من جهازك.
+      </p>
+      <div class="export-grid">
+        <button class="btn btn-primary export-btn" onclick="exportMenuPDF()">
+          <span class="export-title">📄 تحميل PDF</span>
+          <span class="export-desc">كل التصنيفات — جاهز للطباعة</span>
+        </button>
+        <button class="btn btn-ghost export-btn" onclick="exportAllCategoryImages()">
+          <span class="export-title">🖼️ صور كل التصنيفات</span>
+          <span class="export-desc">صورة PNG لكل تصنيف</span>
+        </button>
+      </div>
+      <div id="export-busy">جاري التجهيز... انتظر شوي</div>
+      <div id="export-cat-list"></div>
     </div>
 
     <!-- QR Code -->
@@ -671,8 +746,11 @@
 
 <!-- ========== TOAST ========== -->
 <div id="toast">تم الحفظ ✓</div>
+<div id="export-stage" aria-hidden="true"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.1/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
 <script>
 // ==============================
 //  بيانات المنيو — مدمجة بالكود (عدّل هون أو من لوحة الإدارة)
@@ -752,6 +830,7 @@ function refreshAdminIfOpen() {
   if (!document.getElementById('admin-panel').classList.contains('open')) return;
   renderAdminCats();
   renderAdminItems();
+  renderExportCatList();
   var s = db.settings;
   document.getElementById('s-name').value = s.name;
   document.getElementById('s-subtitle').value = s.subtitle;
@@ -955,6 +1034,7 @@ function openAdmin() {
   renderSyncStatus();
   renderAdminCats();
   renderAdminItems();
+  renderExportCatList();
   // Fill settings
   const s = db.settings;
   document.getElementById('s-name').value = s.name;
@@ -1060,6 +1140,7 @@ function saveCat() {
   saveData(db);
   closeModal('cat-modal');
   renderAdminCats();
+  renderExportCatList();
   toast('تم حفظ التصنيف ✓');
 }
 
@@ -1070,6 +1151,7 @@ function deleteCat(id) {
   saveData(db);
   renderAdminCats();
   renderAdminItems();
+  renderExportCatList();
   toast('تم الحذف');
 }
 
@@ -1277,6 +1359,335 @@ function exportMiniMenu() {
   a.download = 'منيو-' + (db.settings.name || 'المطعم') + '.html';
   a.click();
   toast('تم تحميل صفحة المنيو ✓');
+}
+
+// ==============================
+//  EXPORT PDF + CATEGORY IMAGES
+// ==============================
+function setExportBusy(on) {
+  var el = document.getElementById('export-busy');
+  if (el) el.classList.toggle('show', !!on);
+}
+
+function safeFileName(name) {
+  return String(name || 'menu')
+    .replace(/[\\/:*?"<>|]+/g, '-')
+    .replace(/\s+/g, '-')
+    .slice(0, 60);
+}
+
+function renderExportCatList() {
+  var list = document.getElementById('export-cat-list');
+  if (!list) return;
+  list.innerHTML = '';
+  if (!db.categories.length) {
+    list.innerHTML = '<p style="color:var(--text-dim);font-size:12px;margin-top:12px;text-align:center;">أضف تصنيفات أولاً</p>';
+    return;
+  }
+  db.categories.forEach(function(cat) {
+    var count = db.items.filter(function(i) { return i.catId === cat.id; }).length;
+    var row = document.createElement('div');
+    row.className = 'export-cat-row';
+    row.innerHTML =
+      '<span>' + esc(cat.icon || '') + ' ' + esc(cat.name) +
+      ' <span style="color:var(--text-dim);">(' + count + ')</span></span>' +
+      '<div class="export-cat-actions">' +
+        '<button class="btn btn-ghost btn-sm" onclick="downloadCategoryImage(\'' + cat.id + '\')">⬇️ حفظ</button>' +
+        '<button class="btn btn-primary btn-sm" onclick="shareCategoryImage(\'' + cat.id + '\')">📤 مشاركة</button>' +
+      '</div>';
+    list.appendChild(row);
+  });
+}
+
+function buildCategoryCardHTML(cat, items, opts) {
+  opts = opts || {};
+  var s = db.settings;
+  var currency = s.currency || '₪';
+  var rows = items.map(function(item) {
+    return (
+      '<div class="mc-row">' +
+        '<div class="mc-info">' +
+          '<div class="mc-name">' + esc(item.name) + '</div>' +
+          (item.desc ? '<div class="mc-desc">' + esc(item.desc) + '</div>' : '') +
+        '</div>' +
+        '<div class="mc-price">' + esc(String(item.price)) + ' <span>' + esc(currency) + '</span></div>' +
+      '</div>'
+    );
+  }).join('');
+
+  if (!rows) {
+    rows = '<div class="mc-empty">لا توجد أصناف في هذا التصنيف</div>';
+  }
+
+  return (
+    '<div class="menu-card' + (opts.full ? ' menu-card-full' : '') + '" dir="rtl">' +
+      '<div class="mc-header">' +
+        '<div class="mc-brand">' + esc(s.name || 'المطعم') + '</div>' +
+        (s.subtitle ? '<div class="mc-sub">' + esc(s.subtitle) + '</div>' : '') +
+      '</div>' +
+      '<div class="mc-cat">' +
+        '<span class="mc-cat-icon">' + esc(cat.icon || '🍽️') + '</span>' +
+        '<span class="mc-cat-name">' + esc(cat.name) + '</span>' +
+      '</div>' +
+      '<div class="mc-items">' + rows + '</div>' +
+      '<div class="mc-footer">منيو رسمي للطباعة والمشاركة</div>' +
+    '</div>'
+  );
+}
+
+function buildFullMenuCardsHTML() {
+  var s = db.settings;
+  var sections = db.categories.map(function(cat) {
+    var items = db.items.filter(function(i) { return i.catId === cat.id; });
+    if (!items.length) return '';
+    return buildCategoryCardHTML(cat, items, { full: true });
+  }).filter(Boolean).join('<div class="mc-break"></div>');
+
+  return (
+    '<div class="menu-pack" dir="rtl">' +
+      '<div class="menu-pack-title">' +
+        '<div class="mc-brand">' + esc(s.name || 'المطعم') + '</div>' +
+        (s.subtitle ? '<div class="mc-sub">' + esc(s.subtitle) + '</div>' : '') +
+        '<div class="mc-pack-label">قائمة المنيو الكاملة</div>' +
+      '</div>' +
+      sections +
+    '</div>'
+  );
+}
+
+function getExportStyles() {
+  return (
+    '<style>' +
+    '*{box-sizing:border-box;margin:0;padding:0}' +
+    'body{font-family:"Segoe UI","Cairo",Tahoma,sans-serif;background:#f4efe6;color:#1a1612}' +
+    '.menu-card{width:720px;background:linear-gradient(180deg,#fffdf8 0%,#f7f0e4 100%);border:1px solid #e2d4bc;border-radius:18px;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,.08)}' +
+    '.menu-card-full{width:720px;margin:0 auto 24px;box-shadow:none}' +
+    '.mc-header{padding:28px 28px 18px;text-align:center;background:#1a1612;color:#f0ece4}' +
+    '.mc-brand{font-size:28px;font-weight:800;color:#e8b84b;letter-spacing:.3px}' +
+    '.mc-sub{margin-top:6px;font-size:13px;color:#cbbfae}' +
+    '.mc-cat{display:flex;align-items:center;justify-content:center;gap:10px;padding:18px 24px 8px}' +
+    '.mc-cat-icon{font-size:26px}' +
+    '.mc-cat-name{font-size:22px;font-weight:800;color:#9a6b1f;border-bottom:2px solid #c8952a;padding-bottom:4px}' +
+    '.mc-items{padding:10px 24px 18px}' +
+    '.mc-row{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:14px 0;border-bottom:1px dashed #e0d3bd}' +
+    '.mc-row:last-child{border-bottom:none}' +
+    '.mc-info{flex:1;min-width:0}' +
+    '.mc-name{font-size:16px;font-weight:700;color:#1a1612}' +
+    '.mc-desc{margin-top:4px;font-size:12px;line-height:1.6;color:#6e6558}' +
+    '.mc-price{white-space:nowrap;font-size:16px;font-weight:800;color:#a87418}' +
+    '.mc-price span{font-size:12px;font-weight:600}' +
+    '.mc-empty{padding:24px;text-align:center;color:#8a8072;font-size:14px}' +
+    '.mc-footer{padding:14px 24px 20px;text-align:center;font-size:11px;color:#9a8f80}' +
+    '.menu-pack{width:760px;padding:28px;background:#f4efe6}' +
+    '.menu-pack-title{text-align:center;margin-bottom:22px;padding:22px;background:#1a1612;border-radius:16px}' +
+    '.menu-pack-title .mc-brand{font-size:32px}' +
+    '.mc-pack-label{margin-top:10px;font-size:13px;color:#e8b84b;font-weight:700}' +
+    '.mc-break{height:18px}' +
+    '</style>'
+  );
+}
+
+async function waitForImages(root) {
+  var imgs = Array.from(root.querySelectorAll('img'));
+  await Promise.all(imgs.map(function(img) {
+    if (img.complete) return Promise.resolve();
+    return new Promise(function(resolve) {
+      img.onload = img.onerror = resolve;
+    });
+  }));
+  await new Promise(function(r) { setTimeout(r, 80); });
+}
+
+async function renderExportNode(html) {
+  var stage = document.getElementById('export-stage');
+  stage.innerHTML = getExportStyles() + html;
+  var node = stage.querySelector('.menu-card, .menu-pack');
+  if (!node) throw new Error('فشل تجهيز التصميم');
+  await waitForImages(stage);
+  return node;
+}
+
+async function captureNode(node) {
+  if (!window.html2canvas) throw new Error('مكتبة الصور غير محمّلة — تحقق من الإنترنت');
+  var canvas = await html2canvas(node, {
+    backgroundColor: '#f4efe6',
+    scale: 2,
+    useCORS: true,
+    logging: false,
+    width: node.scrollWidth,
+    height: node.scrollHeight
+  });
+  return canvas;
+}
+
+function canvasToBlob(canvas) {
+  return new Promise(function(resolve) {
+    canvas.toBlob(function(blob) { resolve(blob); }, 'image/png');
+  });
+}
+
+function downloadBlob(blob, filename) {
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(function() { URL.revokeObjectURL(a.href); }, 1500);
+}
+
+async function makeCategoryCanvas(catId) {
+  var cat = db.categories.find(function(c) { return c.id === catId; });
+  if (!cat) throw new Error('التصنيف غير موجود');
+  var items = db.items.filter(function(i) { return i.catId === cat.id; });
+  var node = await renderExportNode(buildCategoryCardHTML(cat, items));
+  var canvas = await captureNode(node);
+  document.getElementById('export-stage').innerHTML = '';
+  return { cat: cat, canvas: canvas };
+}
+
+async function downloadCategoryImage(catId) {
+  try {
+    setExportBusy(true);
+    var res = await makeCategoryCanvas(catId);
+    var blob = await canvasToBlob(res.canvas);
+    downloadBlob(blob, safeFileName((db.settings.name || 'menu') + '-' + res.cat.name) + '.png');
+    toast('تم حفظ صورة التصنيف ✓');
+  } catch (err) {
+    console.error(err);
+    toast((err && err.message) || 'فشل تصدير الصورة');
+  } finally {
+    setExportBusy(false);
+  }
+}
+
+async function shareCategoryImage(catId) {
+  try {
+    setExportBusy(true);
+    var res = await makeCategoryCanvas(catId);
+    var blob = await canvasToBlob(res.canvas);
+    var fileName = safeFileName((db.settings.name || 'menu') + '-' + res.cat.name) + '.png';
+    var file = new File([blob], fileName, { type: 'image/png' });
+
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({
+        files: [file],
+        title: (db.settings.name || 'المنيو') + ' — ' + res.cat.name,
+        text: 'منيو ' + (db.settings.name || '') + ' / ' + res.cat.name
+      });
+      toast('تمت المشاركة ✓');
+    } else if (navigator.share) {
+      // some browsers share without files — fall back to download
+      downloadBlob(blob, fileName);
+      toast('الجهاز ما بيدعم مشاركة الصور — تم الحفظ بدلها');
+    } else {
+      downloadBlob(blob, fileName);
+      toast('تم الحفظ على الجهاز ✓');
+    }
+  } catch (err) {
+    if (err && err.name === 'AbortError') return;
+    console.error(err);
+    toast((err && err.message) || 'فشلت المشاركة');
+  } finally {
+    setExportBusy(false);
+  }
+}
+
+async function exportAllCategoryImages() {
+  if (!db.categories.length) {
+    toast('ما في تصنيفات');
+    return;
+  }
+  try {
+    setExportBusy(true);
+    for (var i = 0; i < db.categories.length; i++) {
+      var cat = db.categories[i];
+      var items = db.items.filter(function(it) { return it.catId === cat.id; });
+      if (!items.length) continue;
+      var node = await renderExportNode(buildCategoryCardHTML(cat, items));
+      var canvas = await captureNode(node);
+      var blob = await canvasToBlob(canvas);
+      downloadBlob(blob, safeFileName((db.settings.name || 'menu') + '-' + cat.name) + '.png');
+      await new Promise(function(r) { setTimeout(r, 350); });
+    }
+    document.getElementById('export-stage').innerHTML = '';
+    toast('تم تحميل صور التصنيفات ✓');
+  } catch (err) {
+    console.error(err);
+    toast((err && err.message) || 'فشل تصدير الصور');
+  } finally {
+    setExportBusy(false);
+  }
+}
+
+async function exportMenuPDF() {
+  if (!db.categories.length) {
+    toast('ما في تصنيفات');
+    return;
+  }
+  try {
+    setExportBusy(true);
+    if (!window.jspdf || !window.jspdf.jsPDF) throw new Error('مكتبة PDF غير محمّلة — تحقق من الإنترنت');
+    var JsPDF = window.jspdf.jsPDF;
+    var pdf = new JsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    var pageW = pdf.internal.pageSize.getWidth();
+    var pageH = pdf.internal.pageSize.getHeight();
+    var margin = 10;
+    var maxW = pageW - margin * 2;
+    var pageContentH = pageH - margin * 2;
+    var pageIndex = 0;
+    var exported = 0;
+
+    for (var i = 0; i < db.categories.length; i++) {
+      var cat = db.categories[i];
+      var items = db.items.filter(function(it) { return it.catId === cat.id; });
+      if (!items.length) continue;
+
+      var node = await renderExportNode(buildCategoryCardHTML(cat, items));
+      var canvas = await captureNode(node);
+      var ratio = maxW / canvas.width;
+      var imgW = maxW;
+      var imgH = canvas.height * ratio;
+
+      if (imgH <= pageContentH) {
+        if (pageIndex > 0) pdf.addPage();
+        var y = margin + Math.max(0, (pageContentH - imgH) / 2);
+        pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', margin, y, imgW, imgH);
+        pageIndex++;
+      } else {
+        var pageCanvasH = Math.floor(pageContentH / ratio);
+        var sy = 0;
+        while (sy < canvas.height) {
+          if (pageIndex > 0) pdf.addPage();
+          var sliceH = Math.min(pageCanvasH, canvas.height - sy);
+          var slice = document.createElement('canvas');
+          slice.width = canvas.width;
+          slice.height = sliceH;
+          var ctx = slice.getContext('2d');
+          ctx.fillStyle = '#f4efe6';
+          ctx.fillRect(0, 0, slice.width, slice.height);
+          ctx.drawImage(canvas, 0, sy, canvas.width, sliceH, 0, 0, canvas.width, sliceH);
+          pdf.addImage(slice.toDataURL('image/jpeg', 0.92), 'JPEG', margin, margin, imgW, sliceH * ratio);
+          sy += sliceH;
+          pageIndex++;
+        }
+      }
+      exported++;
+    }
+
+    document.getElementById('export-stage').innerHTML = '';
+    if (!exported) {
+      toast('ما في أصناف للتصدير');
+      return;
+    }
+    pdf.save(safeFileName(db.settings.name || 'menu') + '-menu.pdf');
+    toast('تم تحميل PDF ✓');
+  } catch (err) {
+    console.error(err);
+    toast((err && err.message) || 'فشل تصدير PDF');
+  } finally {
+    setExportBusy(false);
+  }
 }
 
 // ==============================
